@@ -1,0 +1,154 @@
+---
+title: "Chess_Project_1"
+author: "Xhulia Turkaj"
+date: "2023-09-24"
+output: html_document
+---
+
+## Data 607 Project 01 - Chess Tournament Results
+
+
+
+In this project, I was given a text file with chess tournament results where the information has some structure. My 
+job is to create an R Markdown file that generates a .CSV file (that could for example be imported into a SQL database)
+with the following information for all of the players:
+Player’s Name, Player’s State, Total Number of Points, Player’s Pre-Rating, and Average Pre Chess Rating of Opponents
+
+
+
+### Loading the needed libraries for this project 
+
+```{r}
+library(tidyverse)
+library(data.table)
+library(stringr)
+library(dplyr)
+
+```
+
+### Next, loading the txt file from github
+
+```{r}
+chess <- read.delim('https://raw.githubusercontent.com/xhuliaturkaj/data607_project_1/main/chess_project_raw.txt', skip = 4, header = FALSE, stringsAsFactors=FALSE)
+head(chess)
+```
+
+## Formating the current chess data 
+
+chess is now a dataframe with one column V1 and multiple rows
+
+```{r}
+#Let's start with removing all the rows that contain hyphens 
+
+chess <- subset(chess, !grepl("^-+$", V1))
+
+
+```
+
+
+```{r}
+# Next I will combine every two consecutive rows in one single row as each couple of rows contains info per one individual player
+
+str(chess)
+
+chess_combined <- data.frame(V1 = paste(chess$V1[seq(1, nrow(chess), by = 2)], 
+                                          chess$V1[seq(2, nrow(chess), by = 2)]))
+
+
+chess_combined
+```
+For each observation the information after the arrow -> is unnecessary for my ultimate csv file so I will substitute it with empty string 
+
+
+```{r}
+chess_combined$V1 <- sub("->.*", "", chess_combined$V1)
+head(chess_combined$V1)
+
+```
+
+Next I have created the Rounds Columns 
+```{r}
+
+column_names <- c("Player_Number", "Player_Name", "Total_Pts", "Round_1", "Round_2", "Round_3", 
+                 "Round_4", "Round_5", "Round_6", "Round_7", "State", "Rating")
+
+chess_combined <- chess_combined %>%
+separate(V1, into = column_names, sep = "\\|")
+                         
+```
+
+For the Columns "Round_1", "Round_2", "Round_3", "Round_4", "Round_5", "Round_6" and "Round_7" I only need the numerical values for each observations
+```{r}
+
+
+rounds_columns <- c("Round_1", "Round_2", "Round_3", "Round_4", "Round_5", "Round_6", "Round_7")
+
+#This function will extracte just the numerical values 
+extract_numeric <- function(x) {
+  as.numeric(str_extract(x, "\\d+"))
+}
+
+chess_combined <- chess_combined %>%
+  mutate(across(all_of(rounds_columns), extract_numeric))
+
+```
+
+For the Rating column the true rating value is the numerical value after R: so I will extract that value only 
+
+```{r}
+
+chess_combined <- chess_combined %>%
+  mutate(Rating = str_extract(str_replace(Rating, "^.*\\/ R: ", ""), "\\d+"))
+
+
+```
+
+Next I want to change the values of all 7 round columns from the player number to the players rating, this will make the 
+Opponent Avg Rating easier to calculate
+
+```{r}
+# make sure the rounds columns have numeric values 
+
+chess_combined <- chess_combined %>%
+  mutate(across(all_of(rounds_columns), as.numeric))
+
+chess_lookup_table <- data.frame(
+  Opponent_Rating = as.numeric(as.character(chess_combined$Rating)), 
+  Player_Number = as.numeric(as.character(chess_combined$Player_Number))
+)
+chess_lookup_table
+
+# Replace the player numbers in round columns with their corresponding ratings
+
+chess_combined <- chess_combined %>%
+  rowwise() %>%
+  mutate(across(all_of(rounds_columns), 
+                 ~ ifelse(is.na(.), NA, 
+                          chess_lookup_table$Opponent_Rating[match(., chess_lookup_table$Player_Number)])))
+
+
+```
+
+Next I will create an extra column that represent the average value of the total Opponents Rating 
+```{r}
+
+chess_combined <- chess_combined %>%
+  rowwise() %>%
+  mutate(Average_Opponent_Rating = mean(c_across(all_of(rounds_columns)), na.rm = TRUE)) %>%
+  ungroup()
+
+
+```
+
+The final step is to subset the df with only our columns of interest and to create a csv file 
+
+```{r}
+final_chess_df <- chess_combined %>% select(Player_Name, State,Total_Pts, Rating, Average_Opponent_Rating)%>%
+  mutate( Average_Opponent_Rating= round(Average_Opponent_Rating))
+```
+
+```{r}
+write.csv(final_chess_df, "final_chess_df.csv", row.names = FALSE)
+
+```
+
